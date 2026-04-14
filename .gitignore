@@ -1,0 +1,53 @@
+cat > .gitignore << 'EOF'
+# ── Secrets — NEVER commit these ──────────────────────
+.env
+.env.*
+*.pem
+*.key
+secrets/
+
+# ── Python ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+
+# ── Virtual environments ───────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Docker ─────────────────────────────────────────────
+# Don't ignore docker-compose.yml — that SHOULD be committed
+# Only ignore local override files
+docker-compose.override.yml
+
+# ── Database / volumes ─────────────────────────────────
+postgres-data/
+*.sql.bak
+
+# ── IDE / editor files ─────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Logs ───────────────────────────────────────────────
+*.log
+logs/
+
+# ── OS files ───────────────────────────────────────────
+.DS_Store
+desktop.ini
+EOF
