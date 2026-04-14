@@ -1,0 +1,122 @@
+# docker-compose.yml
+# version: "3.8"
+
+services:
+
+  # ════════════════════════════════════════
+  # ZOOKEEPER
+  # Kafka's internal coordinator.
+  # You never talk to it directly.
+  # ════════════════════════════════════════
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    # "image" means: download this pre-built Docker image
+    # from Docker Hub. No Dockerfile needed for zookeeper.
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  # ════════════════════════════════════════
+  # KAFKA BROKER
+  # The actual message bus.
+  # ════════════════════════════════════════
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    # depends_on = "don't start kafka until zookeeper is up"
+    ports:
+      - "9092:9092"
+    # ports: "HOST:CONTAINER"
+    # 9092 on your laptop → 9092 inside the container
+    # This lets YOU test Kafka from your terminal
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # "zookeeper" here = the SERVICE NAME defined above
+      # Docker's internal DNS resolves it automatically
+
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      # Two addresses Kafka tells clients to connect to:
+      # kafka:29092      → for containers INSIDE docker network
+      # localhost:9092   → for your terminal OUTSIDE docker
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      # replication=1 because we only have 1 kafka broker.
+      # Production would use 3 for fault tolerance.
+
+  # ════════════════════════════════════════
+  # POSTGRESQL
+  # Your orders + products database
+  # ════════════════════════════════════════
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    env_file:
+      - .env
+    # env_file: reads POSTGRES_USER, POSTGRES_PASSWORD,
+    # POSTGRES_DB from your .env file
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      # pg_data = named volume. Data is saved on your disk.
+      # Without this, stopping the container wipes your DB!
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      # This mounts init.sql INTO the container.
+      # Postgres auto-runs any .sql file in this folder on first start.
+
+  # ════════════════════════════════════════
+  # ORDER SERVICE — FastAPI (Producer)
+  # Accepts orders, saves to DB, publishes to Kafka
+  # ════════════════════════════════════════
+  order-service:
+    build: ./order-service
+    # "build" = build a Docker image using
+    # the Dockerfile inside ./order-service folder
+    container_name: order-service
+    ports:
+      - "8000:8000"
+    depends_on:
+      - kafka
+      - postgres
+    env_file:
+      - .env
+    restart: on-failure
+    # restart: on-failure = if the service crashes
+    # (e.g. Kafka not ready yet), Docker restarts it automatically
+
+  # ════════════════════════════════════════
+  # INVENTORY SERVICE (Consumer)
+  # Listens to Kafka, decrements stock
+  # ════════════════════════════════════════
+  inventory-service:
+    build: ./inventory-service
+    container_name: inventory-service
+    depends_on:
+      - kafka
+      - postgres
+    env_file:
+      - .env
+    restart: on-failure
+
+  # ════════════════════════════════════════
+  # NOTIFICATION SERVICE (Consumer)
+  # Listens to Kafka, logs email confirmation
+  # ════════════════════════════════════════
+  notification-service:
+    build: ./notification-service
+    container_name: notification-service
+    depends_on:
+      - kafka
+    env_file:
+      - .env
+    restart: on-failure
+
+# Named volumes — defined here, used above
+volumes:
+  pg_data:
