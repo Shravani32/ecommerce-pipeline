@@ -5,6 +5,7 @@ cat > .gitignore << 'EOF'
 *.pem
 *.key
 secrets/
+node_modules
 
 # ── Python ─────────────────────────────────────────────
 __pycache__/
