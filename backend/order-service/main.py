@@ -1,6 +1,7 @@
 # order-service/main.py
 import os, json, asyncio
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaConnectionError
@@ -11,11 +12,19 @@ load_dotenv()
 
 app = FastAPI(title="Order Service")
 
-# Global Kafka producer — created once on startup
+# ── CORS — allow React dev server ────────────────────────
+# In production, replace "*" with your actual frontend domain
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 kafka_producer = None
 
 
-# ── Pydantic models (request validation) ────────────────
+# ── Request schemas ──────────────────────────────────────
 class OrderItem(BaseModel):
     product_id: str
     quantity: int
@@ -25,23 +34,18 @@ class CreateOrderRequest(BaseModel):
     items: list[OrderItem]
 
 
-# ── Startup: connect to Kafka + DB ───────────────────────
-# This runs ONCE when the FastAPI app boots up
+# ── Startup ──────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
     global kafka_producer
-
-    # Connect to Postgres
     await connect_db()
 
-    # Connect to Kafka with retry
-    # Kafka might not be ready immediately — we retry 5 times
     for attempt in range(5):
         try:
             kafka_producer = AIOKafkaProducer(
                 bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP", "kafka:29092"),
                 value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-                key_serializer=lambda k: k.encode("utf-8") if k else None
+                key_serializer=lambda k: k.encode("utf-8") if k else None,
             )
             await kafka_producer.start()
             print("Connected to Kafka")
@@ -51,7 +55,7 @@ async def startup():
             await asyncio.sleep(3)
 
 
-# ── Shutdown: clean up ───────────────────────────────────
+# ── Shutdown ─────────────────────────────────────────────
 @app.on_event("shutdown")
 async def shutdown():
     if kafka_producer:
@@ -59,18 +63,38 @@ async def shutdown():
     await disconnect_db()
 
 
-# ── GET /health — simple health check ───────────────────
+# ── GET /health ──────────────────────────────────────────
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "order-service"}
 
 
-# ── GET /products — list available products ──────────────
+# ── GET /products ────────────────────────────────────────
 @app.get("/products")
 async def list_products():
     pool = get_pool()
-    rows = await pool.fetch("SELECT * FROM products")
+    rows = await pool.fetch("SELECT * FROM products ORDER BY name")
     return [dict(r) for r in rows]
+
+
+# ── GET /orders — list all orders ────────────────────────
+@app.get("/orders")
+async def list_orders():
+    pool = get_pool()
+    rows = await pool.fetch(
+        "SELECT * FROM orders ORDER BY created_at DESC LIMIT 100"
+    )
+    return [dict(r) for r in rows]
+
+
+# ── GET /orders/{id} ─────────────────────────────────────
+@app.get("/orders/{order_id}")
+async def get_order(order_id: str):
+    pool = get_pool()
+    row = await pool.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
+    if not row:
+        raise HTTPException(404, "Order not found")
+    return dict(row)
 
 
 # ── POST /orders — create order ──────────────────────────
@@ -78,13 +102,12 @@ async def list_products():
 async def create_order(request: CreateOrderRequest):
     pool = get_pool()
 
-    # Step 1: Fetch product prices + validate stock
+    # Validate stock + build item details
     total = 0.0
     items_detail = []
     for item in request.items:
         row = await pool.fetchrow(
-            "SELECT * FROM products WHERE id = $1",
-            item.product_id
+            "SELECT * FROM products WHERE id = $1", item.product_id
         )
         if not row:
             raise HTTPException(404, f"Product {item.product_id} not found")
@@ -95,52 +118,33 @@ async def create_order(request: CreateOrderRequest):
         total += price * item.quantity
         items_detail.append({
             "product_id": item.product_id,
-            "name": row["name"],
-            "quantity": item.quantity,
-            "price": price
+            "name":       row["name"],
+            "quantity":   item.quantity,
+            "price":      price,
         })
 
-    # Step 2: Save order to Postgres
+    # Persist to Postgres first
     row = await pool.fetchrow(
         """INSERT INTO orders (user_id, items, total, status)
            VALUES ($1, $2, $3, 'PENDING') RETURNING id""",
         request.user_id,
         json.dumps(items_detail),
-        total
+        total,
     )
     order_id = str(row["id"])
 
-    # Step 3: Publish event to Kafka topic "order.placed"
-    # Key = order_id → ensures same order always goes
-    # to the same partition (ordering guarantee)
+    # Publish to Kafka after successful DB write
     event = {
         "order_id": order_id,
-        "user_id": request.user_id,
-        "items": items_detail,
-        "total": total
+        "user_id":  request.user_id,
+        "items":    items_detail,
+        "total":    total,
     }
     await kafka_producer.send(
         topic="order.placed",
         key=order_id,
-        value=event
+        value=event,
     )
-    print(f"Published order.placed event for order {order_id}")
+    print(f"Published order.placed for {order_id}")
 
-    return {
-        "order_id": order_id,
-        "status": "PENDING",
-        "total": total,
-        "message": "Order placed. Processing asynchronously."
-    }
-
-
-# ── GET /orders/{id} — check order status ────────────────
-@app.get("/orders/{order_id}")
-async def get_order(order_id: str):
-    pool = get_pool()
-    row = await pool.fetchrow(
-        "SELECT * FROM orders WHERE id = $1", order_id
-    )
-    if not row:
-        raise HTTPException(404, "Order not found")
-    return dict(row)
+    return {"order_id": order_id, "status": "PENDING", "total": total}

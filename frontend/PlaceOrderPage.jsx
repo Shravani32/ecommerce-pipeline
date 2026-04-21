@@ -1,7 +1,7 @@
 // src/pages/PlaceOrderPage.jsx
 import { useState } from "react";
-import { api } from "../api";
-import { useFetch } from "../hooks/useFetch";
+import { api } from "./index";
+import { useFetch } from "./useFetch";
 
 export default function PlaceOrderPage({ notify, setPage }) {
   const { data: products, loading: productsLoading } = useFetch(api.getProducts);

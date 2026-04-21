@@ -1,7 +1,7 @@
 import { useState } from "react";
-import ProductsPage from "./pages/ProductsPage";
-import OrdersPage from "./pages/OrdersPage";
-import PlaceOrderPage from "./pages/PlaceOrderPage";
+import ProductsPage from "./ProductsPage";
+import OrdersPage from "./OrdersPage";
+import PlaceOrderPage from "./PlaceOrderPage";
 import "./index.css";
 
 const NAV = [

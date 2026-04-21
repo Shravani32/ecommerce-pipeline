@@ -1,6 +1,6 @@
 // src/pages/ProductsPage.jsx
-import { api } from "../api";
-import { useFetch } from "../hooks/useFetch";
+import { api } from "./index";
+import { useFetch } from "./useFetch";
 
 function SkeletonCard() {
   return (

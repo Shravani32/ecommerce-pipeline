@@ -1,7 +1,7 @@
 // src/pages/OrdersPage.jsx
 import { useState } from "react";
-import { api } from "../api";
-import { useFetch } from "../hooks/useFetch";
+import { api } from "./index";
+import { useFetch } from "./useFetch";
 
 function StatusBadge({ status }) {
   return <span className={`status-badge status-${status}`}>{status}</span>;
